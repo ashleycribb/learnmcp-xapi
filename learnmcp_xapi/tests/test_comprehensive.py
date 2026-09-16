@@ -47,7 +47,8 @@ class TestFullCoverage:
             "LRS_KEY": "key",
             "LRS_SECRET": "secret",
             "ACTOR_UUID": "student-123",
-            "ENV": "production"
+            "ENV": "production",
+            "CONFIG_PATH": "/nonexistent/path"
         }
         
         with patch.dict(os.environ, env_vars, clear=True):
@@ -58,7 +59,7 @@ class TestFullCoverage:
         # Test missing required fields
         with patch.dict(os.environ, {}, clear=True):
             config = Config()
-            with pytest.raises(ValueError, match="LRS_ENDPOINT"):
+            with pytest.raises(ValueError, match="ACTOR_UUID"):
                 config.validate()
     
     def test_verbs_complete_functionality(self):
@@ -241,7 +242,8 @@ class TestFullCoverage:
             "LRS_KEY": "key",
             "LRS_SECRET": "secret",
             "ACTOR_UUID": "student-123",
-            "ENV": "production"
+            "ENV": "production",
+            "CONFIG_PATH": "/nonexistent/path"
         }
         
         with patch.dict(os.environ, prod_vars, clear=True):

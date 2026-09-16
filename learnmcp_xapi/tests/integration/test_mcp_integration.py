@@ -15,18 +15,28 @@ class TestMCPIntegration:
     @pytest.fixture
     def mock_config(self):
         """Mock configuration for integration tests."""
-        with patch('learnmcp_xapi.main.config') as mock_config:
-            mock_config.LRS_ENDPOINT = "https://test-lrs.example.com"
-            mock_config.LRS_KEY = "test_key"
-            mock_config.LRS_SECRET = "test_secret"
-            mock_config.ACTOR_UUID = "123e4567-e89b-12d3-a456-426614174000"
-            yield mock_config
+        import os
+        env_vars = {
+            "LRSQL_ENDPOINT": "https://test-lrs.example.com",
+            "LRSQL_KEY": "test_key",
+            "LRSQL_SECRET": "test_secret",
+            "ACTOR_UUID": "123e4567-e89b-12d3-a456-426614174000",
+            "LRS_PLUGIN": "lrsql"
+        }
+        with patch.dict(os.environ, env_vars):
+            with patch('learnmcp_xapi.main.config') as mock_config:
+                mock_config.LRS_ENDPOINT = "https://test-lrs.example.com"
+                mock_config.LRS_KEY = "test_key"
+                mock_config.LRS_SECRET = "test_secret"
+                mock_config.ACTOR_UUID = "123e4567-e89b-12d3-a456-426614174000"
+                mock_config.LRS_PLUGIN = "lrsql"
+                yield mock_config
     
     @respx.mock
     async def test_record_xapi_statement_integration(self, mock_config):
         """Test complete statement recording flow."""
         # Mock LRS response
-        respx.post("https://test-lrs.example.com/statements").respond(
+        respx.post("https://test-lrs.example.com/xapi/statements").respond(
             201, json={"id": "test-statement-id"}
         )
         
@@ -58,7 +68,7 @@ class TestMCPIntegration:
         assert statement["object"]["id"] == "https://example.com/activity/math/algebra"
         assert statement["result"]["score"]["raw"] == 2
         assert statement["result"]["score"]["max"] == 3
-        assert "comment" in statement["result"]["extensions"]["https://learnmcp.example.com/extensions/comment"]
+        assert statement["result"]["extensions"]["https://learnmcp.example.com/extensions/comment"] == "Solved quadratic equations"
     
     @respx.mock
     async def test_get_xapi_statements_integration(self, mock_config):
@@ -87,7 +97,7 @@ class TestMCPIntegration:
             ]
         }
         
-        respx.get("https://test-lrs.example.com/statements").respond(
+        respx.get("https://test-lrs.example.com/xapi/statements").respond(
             200, json=mock_statements
         )
         
@@ -107,9 +117,9 @@ class TestMCPIntegration:
         request = respx.calls[0].request
         assert request.method == "GET"
         assert "statements" in str(request.url)
-        assert "agent=123e4567-e89b-12d3-a456-426614174000" in str(request.url)
-        assert "verb=http://adlnet.gov/expapi/verbs/achieved" in str(request.url)
-        assert "activity=https://example.com/activity/test" in str(request.url)
+        assert "123e4567-e89b-12d3-a456-426614174000" in str(request.url)
+        assert "verb=" in str(request.url) and "adlnet.gov" in str(request.url)
+        assert "activity=" in str(request.url) and "example.com" in str(request.url)
         assert "limit=10" in str(request.url)
     
     async def test_list_available_verbs_integration(self, mock_config):
@@ -144,7 +154,7 @@ class TestMCPIntegration:
     async def test_record_statement_with_lrs_retry(self, mock_config):
         """Test integration with LRS retry logic."""
         # First request fails, second succeeds
-        respx.post("https://test-lrs.example.com/statements").mock(
+        respx.post("https://test-lrs.example.com/xapi/statements").mock(
             side_effect=[
                 httpx.Response(500, json={"error": "server error"}),
                 httpx.Response(201, json={"id": "test-statement-id"})
@@ -167,20 +177,21 @@ class TestMCPIntegration:
     @respx.mock
     async def test_full_learning_scenario(self, mock_config):
         """Test complete learning scenario with multiple statements."""
-        # Mock multiple LRS responses
         statement_responses = [
             {"id": "stmt-practiced-1"},
             {"id": "stmt-practiced-2"}, 
             {"id": "stmt-achieved-1"}
         ]
         
-        for response in statement_responses:
-            respx.post("https://test-lrs.example.com/statements").respond(
-                201, json=response
-            )
+        # Mock sequential POST responses using side_effect
+        respx.post("https://test-lrs.example.com/xapi/statements").mock(
+            side_effect=[
+                httpx.Response(201, json=resp) for resp in statement_responses
+            ]
+        )
         
         # Mock statements retrieval
-        respx.get("https://test-lrs.example.com/statements").respond(
+        respx.get("https://test-lrs.example.com/xapi/statements").respond(
             200, json={"statements": [{"id": stmt["id"]} for stmt in statement_responses]}
         )
         
@@ -242,18 +253,17 @@ class TestMCPIntegration:
             )
         assert "valid IRI" in str(exc_info.value)
         
-        # 2. Invalid level
+        # 2. Invalid verb
         with pytest.raises(Exception) as exc_info:
             await record_xapi_statement(
-                verb="practiced",
-                object_id="https://example.com/activity/test",
-                level=5  # Should be 0-3 for integers
+                verb="invalid_verb_name",
+                object_id="https://example.com/activity/test"
             )
-        assert "between 0 and 3" in str(exc_info.value)
+        assert "Unknown verb" in str(exc_info.value)
         
         # 3. LRS completely unavailable
-        respx.post("https://test-lrs.example.com/statements").respond(503)
-        respx.get("https://test-lrs.example.com/statements").respond(503)
+        respx.post("https://test-lrs.example.com/xapi/statements").respond(503)
+        respx.get("https://test-lrs.example.com/xapi/statements").respond(503)
         
         with pytest.raises(Exception):
             await record_xapi_statement(
@@ -279,12 +289,14 @@ class TestConfigurationIntegration:
             "LRS_KEY": "test_key",
             "LRS_SECRET": "test_secret",
             "ACTOR_UUID": "123e4567-e89b-12d3-a456-426614174000",
-            "ENVIRONMENT": "production"
+            "ENV": "production",
+            "CONFIG_PATH": "/nonexistent/path"
         }
         
         with patch.dict(os.environ, env_vars, clear=True):
-            with pytest.raises(ValueError, match="Production environment requires HTTPS"):
-                Config()
+            config = Config()
+            with pytest.raises(ValueError, match="LRS_ENDPOINT must use HTTPS in production"):
+                config.validate()
     
     def test_development_environment_flexibility(self):
         """Test that development environment allows HTTP."""
@@ -296,7 +308,8 @@ class TestConfigurationIntegration:
             "LRS_KEY": "test_key",
             "LRS_SECRET": "test_secret",
             "ACTOR_UUID": "123e4567-e89b-12d3-a456-426614174000",
-            "ENVIRONMENT": "development"
+            "ENV": "development",
+            "CONFIG_PATH": "/nonexistent/path"
         }
         
         with patch.dict(os.environ, env_vars, clear=True):

@@ -37,7 +37,7 @@ class TestPluginSystemIntegration:
         assert plugin_registry.get('ralph') == RalphPlugin
         assert plugin_registry.get('veracity') == VeracityPlugin
         
-        assert plugin_registry.list_plugins() == ['lrsql', 'ralph', 'veracity']
+        assert list(plugin_registry.list_plugins().keys()) == ['lrsql', 'ralph', 'veracity']
     
     def test_plugin_factory_creation_lrsql(self, plugin_registry):
         """Test creating LRS SQL plugin via factory."""
@@ -67,13 +67,13 @@ class TestPluginSystemIntegration:
             
             assert isinstance(plugin, RalphPlugin)
             assert plugin.config.endpoint == "https://ralph.example.com"
-            assert plugin.auth_method == "basic"
+            assert plugin.config.auth_method.value == "basic"
     
     def test_plugin_factory_creation_ralph_oidc(self, plugin_registry):
         """Test creating Ralph plugin with OIDC via factory."""
         config = {
             "endpoint": "https://ralph.example.com",
-            "oidc_issuer": "https://auth.example.com",
+            "oidc_token_url": "https://auth.example.com/oauth2/token",
             "oidc_client_id": "test_client",
             "oidc_client_secret": "test_secret"
         }
@@ -83,7 +83,7 @@ class TestPluginSystemIntegration:
             
             assert isinstance(plugin, RalphPlugin)
             assert plugin.config.endpoint == "https://ralph.example.com"
-            assert plugin.auth_method == "oidc"
+            assert plugin.config.auth_method.value == "oidc"
     
     def test_plugin_factory_creation_veracity(self, plugin_registry):
         """Test creating Veracity plugin via factory."""
@@ -120,39 +120,36 @@ class TestPluginSystemIntegration:
     
     def test_plugin_factory_with_file_config(self, plugin_registry):
         """Test plugin factory with file-based configuration."""
+        import yaml
         config_data = {
-            "lrsql": {
-                "endpoint": "https://file-lrsql.example.com",
-                "key": "file_key",
-                "secret": "file_secret",
-                "timeout": 45
-            }
+            "endpoint": "https://file-lrsql.example.com",
+            "key": "file_key",
+            "secret": "file_secret",
+            "timeout": 45
         }
         
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump(config_data, f)
-            config_file = f.name
-        
-        try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plugin_config_file = os.path.join(temp_dir, "plugins", "lrsql.yaml")
+            os.makedirs(os.path.dirname(plugin_config_file), exist_ok=True)
+            with open(plugin_config_file, 'w') as f:
+                yaml.dump(config_data, f)
+
             with patch('learnmcp_xapi.plugins.factory.plugin_registry', plugin_registry):
-                plugin = PluginFactory.create_plugin('lrsql', config_file=config_file)
+                plugin = PluginFactory.create_plugin('lrsql', config_path=temp_dir)
                 
                 assert isinstance(plugin, LRSSQLPlugin)
                 assert plugin.config.endpoint == "https://file-lrsql.example.com"
                 assert plugin.config.key == "file_key"
                 assert plugin.config.timeout == 45
-        finally:
-            os.unlink(config_file)
     
     def test_plugin_factory_config_precedence(self, plugin_registry):
         """Test configuration precedence: file < env < additional_config."""
+        import yaml
         config_data = {
-            "lrsql": {
-                "endpoint": "https://file-lrsql.example.com",
-                "key": "file_key",
-                "secret": "file_secret",
-                "timeout": 30
-            }
+            "endpoint": "https://file-lrsql.example.com",
+            "key": "file_key",
+            "secret": "file_secret",
+            "timeout": 30
         }
         
         env_vars = {
@@ -166,16 +163,17 @@ class TestPluginSystemIntegration:
             # Note: key from env and secret/timeout from file should be used
         }
         
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump(config_data, f)
-            config_file = f.name
-        
-        try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            plugin_config_file = os.path.join(temp_dir, "plugins", "lrsql.yaml")
+            os.makedirs(os.path.dirname(plugin_config_file), exist_ok=True)
+            with open(plugin_config_file, 'w') as f:
+                yaml.dump(config_data, f)
+
             with patch.dict(os.environ, env_vars):
                 with patch('learnmcp_xapi.plugins.factory.plugin_registry', plugin_registry):
                     plugin = PluginFactory.create_plugin(
                         'lrsql', 
-                        config_file=config_file,
+                        config_path=temp_dir,
                         additional_config=additional_config
                     )
                     
@@ -186,13 +184,11 @@ class TestPluginSystemIntegration:
                     # Lowest precedence: file config (used when not overridden)
                     assert plugin.config.secret.get_secret_value() == "file_secret"
                     assert plugin.config.timeout == 30
-        finally:
-            os.unlink(config_file)
     
     def test_plugin_factory_invalid_plugin(self, plugin_registry):
         """Test factory behavior with invalid plugin name."""
         with patch('learnmcp_xapi.plugins.factory.plugin_registry', plugin_registry):
-            with pytest.raises(ValueError, match="Unknown plugin: nonexistent"):
+            with pytest.raises(ValueError, match="Unknown plugin: 'nonexistent'"):
                 PluginFactory.create_plugin('nonexistent')
     
     def test_plugin_factory_invalid_config(self, plugin_registry):
@@ -263,11 +259,11 @@ class TestPluginSystemIntegration:
         }
         
         # Mock Ralph responses
-        respx.post("https://ralph.example.com/xapi/statements/").respond(
-            200, json={"success": True}
+        respx.post("https://ralph.example.com/xAPI/statements/").respond(
+            200, json=["stmt1"]
         )
         
-        respx.get("https://ralph.example.com/xapi/statements/").respond(
+        respx.get("https://ralph.example.com/xAPI/statements/").respond(
             200, json={
                 "statements": [
                     {"id": "stmt1", "timestamp": "2023-01-01T00:00:00Z"}
@@ -280,7 +276,7 @@ class TestPluginSystemIntegration:
             plugin = PluginFactory.create_plugin('ralph', additional_config=config)
             
             # Verify auth method detection
-            assert plugin.auth_method == "basic"
+            assert plugin.config.auth_method.value == "basic"
             
             # Test statement posting
             statement = {
@@ -290,7 +286,7 @@ class TestPluginSystemIntegration:
             }
             
             result = await plugin.post_statement(statement)
-            assert result["success"] == True
+            assert result["id"] == "stmt1"
             
             # Test statement retrieval
             statements = await plugin.get_statements(actor_uuid="test-uuid")
@@ -306,7 +302,7 @@ class TestPluginSystemIntegration:
         """Test complete end-to-end flow with Ralph plugin using OIDC."""
         config = {
             "endpoint": "https://ralph.example.com",
-            "oidc_issuer": "https://auth.example.com",
+            "oidc_token_url": "https://auth.example.com/oauth2/token",
             "oidc_client_id": "test_client",
             "oidc_client_secret": "test_secret"
         }
@@ -321,8 +317,8 @@ class TestPluginSystemIntegration:
         )
         
         # Mock Ralph responses
-        respx.post("https://ralph.example.com/xapi/statements/").respond(
-            200, json={"success": True}
+        respx.post("https://ralph.example.com/xAPI/statements/").respond(
+            200, json=["stmt1"]
         )
         
         with patch('learnmcp_xapi.plugins.factory.plugin_registry', plugin_registry):
@@ -330,7 +326,7 @@ class TestPluginSystemIntegration:
             plugin = PluginFactory.create_plugin('ralph', additional_config=config)
             
             # Verify auth method detection
-            assert plugin.auth_method == "oidc"
+            assert plugin.config.auth_method.value == "oidc"
             
             # Test statement posting (will trigger token acquisition)
             statement = {
@@ -340,7 +336,7 @@ class TestPluginSystemIntegration:
             }
             
             result = await plugin.post_statement(statement)
-            assert result["success"] == True
+            assert result["id"] == "stmt1"
             
             # Verify OIDC token was acquired and used
             assert len(respx.calls) == 2  # Token request + statement post

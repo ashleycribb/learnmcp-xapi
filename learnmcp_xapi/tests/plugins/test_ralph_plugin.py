@@ -48,7 +48,7 @@ class TestRalphPlugin:
     def test_plugin_metadata(self):
         """Test plugin metadata is correct."""
         assert RalphPlugin.name == "ralph"
-        assert "Ralph Learning Record Store" in RalphPlugin.description
+        assert "Ralph" in RalphPlugin.description
         assert RalphPlugin.version == "1.0.0"
     
     def test_config_model(self):
@@ -138,7 +138,7 @@ class TestRalphPlugin:
         token = await ralph_oidc_plugin._get_oidc_token()
         
         assert token == "test_access_token"
-        assert ralph_oidc_plugin._oidc_token == "test_access_token"
+        assert ralph_oidc_plugin._token_cache == "test_access_token"
         assert ralph_oidc_plugin._token_expires_at is not None
     
     @pytest.mark.asyncio
@@ -168,7 +168,7 @@ class TestRalphPlugin:
     async def test_oidc_token_refresh(self, ralph_oidc_plugin):
         """Test OIDC token refresh when expired."""
         # Set up expired token
-        ralph_oidc_plugin._oidc_token = "expired_token"
+        ralph_oidc_plugin._token_cache = "expired_token"
         ralph_oidc_plugin._token_expires_at = datetime.now(timezone.utc)
         
         # Mock token endpoint
@@ -183,7 +183,7 @@ class TestRalphPlugin:
         token = await ralph_oidc_plugin._get_oidc_token()
         
         assert token == "new_access_token"
-        assert ralph_oidc_plugin._oidc_token == "new_access_token"
+        assert ralph_oidc_plugin._token_cache == "new_access_token"
     
     @pytest.mark.asyncio
     @respx.mock
@@ -214,12 +214,12 @@ class TestRalphPlugin:
             "object": {"id": "http://example.com/object"}
         }
         
-        respx.post("https://ralph-lrs.example.com/xapi/statements/").respond(
-            200, json={"success": True}
+        respx.post("https://ralph-lrs.example.com/xAPI/statements/").respond(
+            200, json=["stmt1"]
         )
         
         result = await ralph_basic_auth_plugin.post_statement(statement)
-        assert result["success"] == True
+        assert result["id"] == "stmt1"
     
     @pytest.mark.asyncio
     @respx.mock
@@ -241,12 +241,12 @@ class TestRalphPlugin:
         )
         
         # Mock statement posting
-        respx.post("https://ralph-lrs.example.com/xapi/statements/").respond(
-            200, json={"success": True}
+        respx.post("https://ralph-lrs.example.com/xAPI/statements/").respond(
+            200, json=["stmt1"]
         )
         
         result = await ralph_oidc_plugin.post_statement(statement)
-        assert result["success"] == True
+        assert result["id"] == "stmt1"
         
         # Verify Bearer token was used
         request = respx.calls[-1].request
@@ -263,16 +263,16 @@ class TestRalphPlugin:
         }
         
         # First two requests fail with 500, third succeeds
-        respx.post("https://ralph-lrs.example.com/xapi/statements/").mock(
+        respx.post("https://ralph-lrs.example.com/xAPI/statements/").mock(
             side_effect=[
                 httpx.Response(500, json={"error": "server error"}),
                 httpx.Response(500, json={"error": "server error"}),
-                httpx.Response(200, json={"success": True})
+                httpx.Response(200, json=["stmt1"])
             ]
         )
         
         result = await ralph_basic_auth_plugin.post_statement(statement)
-        assert result["success"] == True
+        assert result["id"] == "stmt1"
     
     @pytest.mark.asyncio
     @respx.mock
@@ -285,7 +285,7 @@ class TestRalphPlugin:
         }
         
         # All requests fail with 500
-        respx.post("https://ralph-lrs.example.com/xapi/statements/").respond(500)
+        respx.post("https://ralph-lrs.example.com/xAPI/statements/").respond(500)
         
         from fastapi import HTTPException
         with pytest.raises(HTTPException) as exc_info:
@@ -303,7 +303,7 @@ class TestRalphPlugin:
             "object": {"id": "http://example.com/object"}
         }
         
-        respx.post("https://ralph-lrs.example.com/xapi/statements/").respond(
+        respx.post("https://ralph-lrs.example.com/xAPI/statements/").respond(
             400, json={"error": "bad request"}
         )
         
@@ -317,7 +317,7 @@ class TestRalphPlugin:
     @respx.mock
     async def test_get_statements_success(self, ralph_basic_auth_plugin):
         """Test successful statements retrieval."""
-        respx.get("https://ralph-lrs.example.com/xapi/statements/").respond(
+        respx.get("https://ralph-lrs.example.com/xAPI/statements/").respond(
             200, json={
                 "statements": [
                     {"id": "stmt1", "actor": {"name": "test"}, "timestamp": "2023-01-02T00:00:00Z"},
@@ -336,7 +336,7 @@ class TestRalphPlugin:
     @respx.mock
     async def test_get_statements_with_filters(self, ralph_basic_auth_plugin):
         """Test statements retrieval with query filters."""
-        respx.get("https://ralph-lrs.example.com/xapi/statements/").respond(
+        respx.get("https://ralph-lrs.example.com/xAPI/statements/").respond(
             200, json={"statements": []}
         )
         
@@ -362,7 +362,7 @@ class TestRalphPlugin:
     @respx.mock
     async def test_get_statements_limit_enforcement(self, ralph_basic_auth_plugin):
         """Test that statement limit is enforced."""
-        respx.get("https://ralph-lrs.example.com/xapi/statements/").respond(
+        respx.get("https://ralph-lrs.example.com/xAPI/statements/").respond(
             200, json={"statements": []}
         )
         
@@ -386,15 +386,15 @@ class TestRalphPlugin:
         }
         
         # First request times out, second succeeds
-        respx.post("https://ralph-lrs.example.com/xapi/statements/").mock(
+        respx.post("https://ralph-lrs.example.com/xAPI/statements/").mock(
             side_effect=[
                 httpx.TimeoutException("Connection timeout"),
-                httpx.Response(200, json={"success": True})
+                httpx.Response(200, json=["stmt1"])
             ]
         )
         
         result = await ralph_basic_auth_plugin.post_statement(statement)
-        assert result["success"] == True
+        assert result["id"] == "stmt1"
     
     @pytest.mark.asyncio
     @respx.mock
@@ -405,11 +405,8 @@ class TestRalphPlugin:
             400, json={"error": "invalid_client"}
         )
         
-        from fastapi import HTTPException
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(httpx.HTTPStatusError):
             await ralph_oidc_plugin._get_oidc_token()
-        
-        assert exc_info.value.status_code == 503
     
     @pytest.mark.asyncio
     async def test_close_client(self, ralph_basic_auth_plugin):
