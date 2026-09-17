@@ -47,16 +47,19 @@ def test_config_validation():
         with pytest.raises(ValueError, match="ACTOR_UUID is required"):
             config.validate()
     
-    # Test missing LRS_ENDPOINT
-    with patch.object(config, 'LRS_ENDPOINT', ''):
-        with pytest.raises(ValueError, match="LRS_ENDPOINT is required"):
-            config.validate()
+    # Test missing LRS_KEY/SECRET in legacy configuration
+    with patch.object(config, 'CONFIG_PATH', '/nonexistent/path'):
+        with patch.object(config, 'LRS_ENDPOINT', 'https://example.com'):
+            with patch.object(config, 'LRS_KEY', ''):
+                with pytest.raises(ValueError, match="LRS_KEY and LRS_SECRET are required"):
+                    config.validate()
     
-    # Test production HTTPS requirement
-    with patch.object(config, 'ENV', 'production'):
-        with patch.object(config, 'LRS_ENDPOINT', 'http://insecure.com'):
-            with pytest.raises(ValueError, match="must use HTTPS in production"):
-                config.validate()
+    # Test production HTTPS requirement in legacy configuration
+    with patch.object(config, 'CONFIG_PATH', '/nonexistent/path'):
+        with patch.object(config, 'ENV', 'production'):
+            with patch.object(config, 'LRS_ENDPOINT', 'http://insecure.com'):
+                with pytest.raises(ValueError, match="must use HTTPS in production"):
+                    config.validate()
 
 
 @respx.mock

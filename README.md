@@ -255,6 +255,9 @@ You should see a response indicating the server is starting.
 
 LearnMCP-xAPI supports multiple Learning Record Stores through its plugin architecture, making it easy to integrate with your existing educational technology infrastructure.
 
+### Cloud & Infrastructure Deployment
+- **[Google Cloud Run Deployment](docs/GCP_DEPLOYMENT.md)** - Step-by-step guide for deploying LearnMCP-xAPI and Scholar Explorer on Google Cloud Run.
+
 ### Learning Record Store Integration
 - **[LRS SQL Setup](https://github.com/DavidLMS/learnmcp-xapi/wiki/LRS-SQL-Setup)** - Complete guide for setting up LRS SQL as your development LRS.
 - **[Ralph LRS Setup](https://github.com/DavidLMS/learnmcp-xapi/wiki/Ralph-LRS-Setup)** - Enterprise LRS integration with Basic Auth and OIDC support.
